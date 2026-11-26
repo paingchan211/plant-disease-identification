@@ -1,11 +1,16 @@
-"""Plant disease identifier (DPD-Small): Streamlit app of the report's final model.
+"""Unseen plant disease identifier (DPD-Small): Streamlit app of the project's final model.
 
-Model (model.py): Branch 1 (fine-tuned BioCLIP, text tables re-fitted with cVAE synthetic embeddings) ensembled with
-Branch 2 (MaPLe, 3 seeds): S = 0.4 * S1 + 0.6 * S2 + 7.414 * [pair is unseen]. Same scoring and preprocessing as the
-evaluation, so it reproduces the report (seed 42: seen Top-1 67.9 %, unseen 87.5 %).
+Model (model.py): Branch 1 = BioCLIP with its top 6 blocks fine-tuned (WiSE-FT, soup of 3 seeds), text tables re-fitted
+on real + synthetic (cVAE) embeddings of the unseen pairs; Branch 2 = MaPLe prompt learning on frozen BioCLIP (3 seeds).
+Score = 0.4 * Branch 1 + 0.6 * Branch 2 + bias for the 10 unseen pairs, all chosen on validation data.
+The app scores an image exactly as the evaluation did: on the test set it gives seen Top-1 67.9 %, unseen 87.5 %
+(check_reproduces.py).
 
-The model files are downloaded once from a Hugging Face model repo, set in .streamlit/secrets.toml (HF_REPO, and
-HF_TOKEN if the repo is private).
+The model files are downloaded once from a Hugging Face model repo, set as the Streamlit secret HF_REPO
+(plus HF_TOKEN if the repo is private).
+
+Input: a leaf / plant photo (upload, camera or example). Output: top-5 crop-disease pairs (unseen ones flagged), the crop
+and the disease separately, and the training images it matches (nearest neighbours in Branch 1's embedding space).
 
     streamlit run streamlit_app.py
 """
@@ -19,109 +24,141 @@ from huggingface_hub import snapshot_download
 
 from model import HERE, FinalModel
 
-st.set_page_config(page_title='Plant disease identifier', page_icon=':material/eco:', layout='centered')
+st.set_page_config(page_title='Unseen plant disease identifier', page_icon=':material/eco:', layout='wide')
 
-FILES = ['branch1_a.pt', 'branch1_b.pt', 'heads.pt', 'thumbs.zip']
+# test results of this exact model (cVAE seed 42), from Zwe's ensemble_synth run; the report gives the mean of 3 seeds
+TEST = {'Seen Top-1': 67.9, 'Unseen Top-1': 87.4, 'Harmonic mean': 76.4, 'Seen Top-5': 91.8, 'Unseen Top-5': 99.6}
 nice = lambda s: s.replace('_', ' ')
 
 
-def secret(name, default=None):
+FILES = ['branch1_a.pt', 'branch1_b.pt', 'heads.pt', 'thumbs.zip']
+
+
+def secret(name):
     try:
-        return st.secrets.get(name, os.environ.get(name, default))
+        return st.secrets.get(name, os.environ.get(name))
     except FileNotFoundError:          # no secrets.toml: fall back to environment variables
-        return os.environ.get(name, default)
+        return os.environ.get(name)
+
+
+@st.cache_resource(show_spinner=False)
+def model_folder():
+    repo = secret('HF_REPO')
+    # ponytail: a local folder also works, for testing before the upload
+    return Path(repo) if Path(repo).is_dir() else Path(snapshot_download(repo, allow_patterns=FILES, token=secret('HF_TOKEN')))
 
 
 @st.cache_resource(show_spinner='Loading the model. The first start downloads about 750 MB, so it can take a few minutes.')
-def load():
-    repo = secret('HF_REPO')
-    # ponytail: a local folder also works, for testing before the upload
-    folder = repo if Path(repo).is_dir() else snapshot_download(repo, allow_patterns=FILES, token=secret('HF_TOKEN'))
-    with zipfile.ZipFile(Path(folder) / 'thumbs.zip') as z:
-        thumbs = {n: z.read(n) for n in z.namelist()}
-    return FinalModel(folder), thumbs
+def load_model():
+    return FinalModel(model_folder())
+
+
+@st.cache_resource(show_spinner=False)
+def load_thumbs():
+    with zipfile.ZipFile(model_folder() / 'thumbs.zip') as z:
+        return {n: z.read(n) for n in z.namelist()}
 
 
 @st.cache_data(max_entries=64, show_spinner=False)
 def predict(data: bytes):
-    p, _, _, sim = load()[0].predict(data)
+    p, _, _, sim = load_model().predict(data)
     nn_sim, nn_idx = sim.topk(6)
     return p.tolist(), list(zip(nn_idx.tolist(), nn_sim.tolist()))
 
 
+def example_label(path):
+    pair = path.name.split('__')[0]
+    return nice(pair).capitalize() + (' (unseen pair)' if pair in UNSEEN_NAMES else '')
+
+
 if not secret('HF_REPO'):
-    st.error('Set HF_REPO (your Hugging Face model repo, e.g. "username/plant-disease-model") in .streamlit/secrets.toml '
-             'or in the app settings on Streamlit Cloud.')
+    st.error('Set HF_REPO (your Hugging Face model repo, e.g. "username/plant-disease-model") in the app secrets.')
     st.stop()
 
-model, thumbs = load()
+model = load_model()
 L = model.labels
 UNSEEN = set(L['unseen'])
+UNSEEN_NAMES = {L['pairs'][i] for i in UNSEEN}
 EXAMPLES = sorted((HERE / 'examples').glob('*.jpg'))
 
-st.title('Plant disease identifier', anchor=False)
-st.write('Take or upload a photo of a leaf. The app tells you the **crop** and the **disease**, '
-         'including some crop and disease combinations it never saw in training.')
+st.title('Unseen plant disease identifier', anchor=False)
+st.caption('Upload a photo of a leaf or plant. The model names the crop and the disease, including crop-disease '
+           'combinations it never saw during training, and shows the training images it matches.')
 
-# ---- 1. the photo -------------------------------------------------------------------------------------------------
-st.subheader('1. Choose a photo', anchor=False)
-up, cam, ex = st.tabs([':material/upload: Upload', ':material/photo_camera: Camera', ':material/image: Try an example'])
-with up:
-    f = st.file_uploader('Leaf photo', type=['jpg', 'jpeg', 'png', 'webp'], label_visibility='collapsed')
-with cam:
-    # behind a toggle so the browser only asks for the camera when it is wanted
-    c = st.camera_input('Take a photo of the leaf') if st.toggle('Turn on the camera') else None
-with ex:
-    pick = st.radio('Example photos from the test set', EXAMPLES, index=None,
-                    format_func=lambda p: nice(p.name.split('__')[0]).capitalize())
-data = (f.getvalue() if f else None) or (c.getvalue() if c else None) or (pick.read_bytes() if pick else None)
+left, right = st.columns([2, 3], gap='large')
+with left:
+    source = st.segmented_control('Image source', ['Upload', 'Camera', 'Example'], default='Upload', required=True, key='source',
+                                  format_func=lambda s: {'Upload': ':material/upload: Upload',
+                                                         'Camera': ':material/photo_camera: Camera',
+                                                         'Example': ':material/image: Example'}[s])
+    data = None
+    if source == 'Upload':
+        f = st.file_uploader('Plant photo', type=['jpg', 'jpeg', 'png', 'webp', 'bmp'])
+        data = f.getvalue() if f else None
+    elif source == 'Camera':
+        f = st.camera_input('Take a photo of the leaf')
+        data = f.getvalue() if f else None
+    else:
+        ex = st.pills('Test images (file name = true label)', EXAMPLES, format_func=example_label, default=EXAMPLES[2],
+                     key='example')
+        data = ex.read_bytes() if ex else None
+    if data:
+        st.image(data, width=360, alt='The photo being identified')
 
-if not data:
-    st.info('Upload a photo, take one, or pick an example to see the result.', icon=':material/arrow_upward:')
-    st.stop()
+with right:
+    if not data:
+        st.info('Choose a photo on the left to identify the crop and the disease.', icon=':material/eco:')
+    else:
+        with st.spinner('Identifying (about 1 to 3 seconds)...'):
+            p, nn = predict(data)
+        order = sorted(range(len(p)), key=lambda i: -p[i])[:5]
+        best = order[0]
+        c, d = L['pair_crop'][best], L['pair_dis'][best]
+        with st.container(border=True):
+            st.subheader(f'{nice(L["crops"][c]).capitalize()}: {nice(L["diseases"][d])}', anchor=False)
+            if best in UNSEEN:
+                st.badge('Combination never seen in training', icon=':material/new_releases:', color='orange')
+                st.caption('The model composed this answer from what it learned about this crop with other diseases '
+                           'and about this disease on other crops.')
+            st.dataframe(
+                pd.DataFrame({'Crop - disease': [nice(L['pairs'][i]) for i in order],
+                              'Confidence': [p[i] for i in order],
+                              'In training': ['no (unseen pair)' if i in UNSEEN else 'yes' for i in order]}),
+                hide_index=True, alt='Top-5 crop-disease predictions with confidence',
+                column_config={'Confidence': st.column_config.ProgressColumn(format='percent', min_value=0.0, max_value=1.0)})
+            st.caption('Confidence is calibrated on validation images (temperature scaling). Crop and disease below '
+                       'add up the confidence of every pair with that crop or that disease.')
+        # crop and disease separately: the final model's pair probabilities summed per crop / per disease
+        crop_p, dis_p = [0.0] * len(L['crops']), [0.0] * len(L['diseases'])
+        for i, q in enumerate(p):
+            crop_p[L['pair_crop'][i]] += q
+            dis_p[L['pair_dis'][i]] += q
+        cc, dc = st.columns(2)
+        for col, probs, names, title in ((cc, crop_p, L['crops'], 'Crop'), (dc, dis_p, L['diseases'], 'Disease')):
+            top = sorted(range(len(probs)), key=lambda i: -probs[i])[:3]
+            col.dataframe(pd.DataFrame({title: [nice(names[i]) for i in top], 'Probability': [probs[i] for i in top]}),
+                          hide_index=True, alt=f'Top-3 {title.lower()}',
+                          column_config={'Probability': st.column_config.ProgressColumn(format='percent', min_value=0.0,
+                                                                                        max_value=1.0)})
 
-# ---- 2. the result ------------------------------------------------------------------------------------------------
-st.subheader('2. Result', anchor=False)
-with st.spinner('Looking at the leaf...'):
-    p, nn = predict(data)
-order = sorted(range(len(p)), key=lambda i: -p[i])[:5]
-best = order[0]
-crop, dis = nice(L['crops'][L['pair_crop'][best]]), nice(L['diseases'][L['pair_dis'][best]])
-
-photo, answer = st.columns([2, 3], gap='medium')
-photo.image(data, width='stretch')
-with answer:
-    with st.container(border=True):
-        st.metric('Crop', crop.capitalize())
-        st.metric('Disease', dis.capitalize())
-        st.progress(p[best], text=f'Confidence: {p[best]:.0%}')
-        if best in UNSEEN:
-            st.badge('New combination: never seen in training', icon=':material/new_releases:', color='orange')
-
-st.write('**Other possible answers**')
-st.dataframe(
-    pd.DataFrame({'Crop': [nice(L['crops'][L['pair_crop'][i]]).capitalize() for i in order],
-                  'Disease': [nice(L['diseases'][L['pair_dis'][i]]) for i in order],
-                  'Confidence': [p[i] for i in order],
-                  'Seen in training': ['No' if i in UNSEEN else 'Yes' for i in order]}),
-    hide_index=True, width='stretch',
-    column_config={'Confidence': st.column_config.ProgressColumn(format='percent', min_value=0.0, max_value=1.0)})
-
-# ---- 3. why -------------------------------------------------------------------------------------------------------
-st.subheader('3. Similar training photos', anchor=False)
-st.caption('The training photos that look most like yours, according to the model.')
-for col, (i, s) in zip(st.columns(3) + st.columns(3), nn):
-    col.image(thumbs[model.files[i]], width='stretch',
-              caption=f'{nice(L["crops"][int(model.kcrop[i])])}, {nice(L["diseases"][int(model.kdis[i])])}')
+if data:
+    st.subheader('Most similar training images', anchor=False)
+    thumbs, mem = load_thumbs(), model
+    cols = st.columns(6)
+    for col, (i, s) in zip(cols, nn):
+        cap = f'{nice(L["crops"][int(mem.kcrop[i])])} · {nice(L["diseases"][int(mem.kdis[i])])} (similarity {s:.2f})'
+        col.image(thumbs[mem.files[i]], caption=cap, width='stretch', alt=cap)
 
 with st.expander('How it works', icon=':material/info:'):
     st.markdown(
-        '- Two models look at the photo and their scores are added together (40% and 60%).\n'
-        '- **Model 1** is BioCLIP, a vision and language model for biology, fine-tuned on our training photos. It also '
-        'learned from made-up (synthetic) examples of the combinations that have no training photos.\n'
-        '- **Model 2** is BioCLIP with learned prompts (MaPLe), averaged over 3 training runs.\n'
-        '- There are 333 crop and disease combinations. 10 of them have no training photos; the model works them out '
-        'from what it knows about the crop and the disease separately.\n'
-        '- On the test set it gets 67.9% of seen and 87.5% of unseen combinations right on the first answer.\n'
-        '- The confidence is scaled on validation photos, so it is not over-confident.')
-    st.caption('COS30082 Applied Machine Learning, Group 4.')
+        '- **Branch 1**: the biology vision-language model BioCLIP with its top 6 of 12 blocks fine-tuned on the 323 seen '
+        'crop-disease pairs, merged with the pre-trained weights (WiSE-FT) and averaged over 3 training runs. Its text '
+        'tables are re-fitted on synthetic image embeddings (conditional VAE) of the 10 unseen pairs.\n'
+        '- **Branch 2**: MaPLe prompt learning on frozen BioCLIP, 3 seeds.\n'
+        '- **Score** = 0.4 × Branch 1 + 0.6 × Branch 2 + a bias for the unseen pairs. The weight and the bias were '
+        'chosen on validation images; the test set chose nothing.\n'
+        '- The similar training images are the nearest neighbours of the photo in Branch 1\'s embedding space.')
+    st.dataframe(pd.DataFrame([TEST]), hide_index=True, alt='Test results of this model (%)',
+                 column_config={k: st.column_config.NumberColumn(format='%.1f %%') for k in TEST})
+    st.caption('Test results of this exact model (DPD-Small, 2,000 seen and 1,448 unseen test images). '
+               'COS30082 Applied Machine Learning, group project.')
