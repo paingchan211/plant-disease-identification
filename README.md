@@ -8,7 +8,7 @@ embeddings, ensembled with MaPLe** (S = 0.4·S1 + 0.6·S2 + 7.414·[unseen pair]
 |---|---|
 | `streamlit_app.py` | the interface |
 | `model.py` | the model: preprocessing, Branch 1, MaPLe, ensemble (from Andrew's app, unchanged except where the weights are loaded from) |
-| `labels.json`, `examples/` | pair, crop and disease names; six test photos |
+| `labels.json`, `examples/` | pair, crop and disease names; eight test photos for the "Try it" buttons |
 | `hf_upload/` | the model files for Hugging Face (not pushed to GitHub): `branch1_a.pt`, `branch1_b.pt`, `heads.pt`, `thumbs.zip`, about 130 MB |
 | `upload_to_hf.py` | uploads `hf_upload/` to a Hugging Face model repo |
 
