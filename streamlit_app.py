@@ -86,13 +86,21 @@ EXAMPLES = [('CDDM_tomato_early_blight_89125.jpg', 'Tomato early blight', 'Lab',
 
 
 @st.cache_data
-def example_tile(file, setting, tag):
-    """The example photo with its tags drawn on top (HTML, so the tags stay sharp at any size)."""
-    buf = io.BytesIO()
-    square((HERE / 'examples' / file).read_bytes()).save(buf, 'JPEG', quality=88)
-    tags = (f'<span class="tag new">{tag}</span>' if tag else '') + f'<span class="tag env">{setting}</span>'
-    return (f'<div class="ex"><img alt="" src="data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode()}">'
-            f'{tags}</div>')
+def cards_css():
+    """Each example is one Streamlit button drawn as a photo card: the photo is the button's background, the tags are
+    its ::before / ::after, and the name sits at the bottom. So the whole card (photo + name) is one click target."""
+    css = []
+    for i, (file, name, setting, tag) in enumerate(EXAMPLES):
+        buf = io.BytesIO()
+        ImageOps.fit(Image.open(HERE / 'examples' / file).convert('RGB'), (300, 200)).save(buf, 'JPEG', quality=85)
+        url = 'data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode()
+        new = f'"{tag}"' if tag else 'none'
+        css.append(f'.st-key-card{i} button {{background-image: url({url}); --tag: {new}; --env: "{setting}";}}')
+        # long names get slightly smaller text so every name fits on one line
+        css.append(f'.st-key-card{i} button p {{font-size: clamp(0.62rem, {min(9.6, 182 / len(name)):.1f}cqw, 1.1rem);}}')
+        if not tag:
+            css.append(f'.st-key-card{i} button::before {{display: none;}}')
+    return '<style>' + ' '.join(css) + '</style>'
 
 
 @st.cache_data(max_entries=64)
@@ -122,33 +130,45 @@ h1 {padding: 0 0 0.2rem 0 !important; font-size: clamp(2rem, 2vw, 2.6rem) !impor
 [data-testid="stFileUploaderDropzoneInstructions"] {text-align: center;}
 /* sizes grow with the screen (clamp: smallest, preferred, largest), so big screens get bigger text and photos
    while a 1366x768 laptop still shows the whole page; example names stay on one line */
-.st-key-examples button p {font-size: clamp(0.67rem, 0.78vw, 1rem); white-space: nowrap;}
-.st-key-examples button {min-height: 1.8rem; padding: 0 0.2rem;}
-/* photos are cropped to a fixed height so the whole page fits on one screen */
-.ex {position: relative;}
-.ex img {display: block; width: 100%; height: clamp(82px, calc(82px + (100vh - 768px) * 0.2), 160px); object-fit: cover;
-         border-radius: 0.5rem;}
-.tag {position: absolute; left: 5px; padding: 0.05rem 0.35rem; border-radius: 0.3rem; color: white;
-      font-size: clamp(0.62rem, 0.62vw, 0.8rem); font-weight: 600; line-height: 1.4; white-space: nowrap;}
-.tag.new {top: 5px; background: #e65100;}
-.tag.env {bottom: 5px; background: rgba(0, 0, 0, 0.55);}
+/* example cards: the photo (3:2) fills the top of the button, the name sits in a strip at the bottom */
+.st-key-examples [class*="st-key-card"] {container-type: inline-size;}
+.st-key-examples button {
+    position: relative; width: 100%; height: calc(66.6cqw + 2.1rem); padding: 0; overflow: hidden;
+    align-items: flex-end; border-radius: 0.7rem; border: 1px solid rgba(128, 128, 128, 0.3);
+    background-size: 100% 66.6cqw; background-position: top; background-repeat: no-repeat;
+    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.st-key-examples button:hover {transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15); border-color: #2e7d32;}
+.st-key-examples button [data-testid="stMarkdownContainer"] {width: 100%; height: 2.1rem; display: flex;
+    align-items: center; justify-content: center;}
+.st-key-examples button p {font-size: clamp(0.62rem, 8.4cqw, 1.1rem); white-space: nowrap; margin: 0;}
+.st-key-examples button[kind="primary"], .st-key-examples button[data-testid="stBaseButton-primary"] {
+    border: 2px solid #2e7d32; box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.25);}
+/* tags on the photo: "New pair" top left, "Lab" / "Field" at the bottom of the photo */
+.st-key-examples button::before, .st-key-examples button::after {
+    position: absolute; left: 6px; padding: 0.05rem 0.4rem; border-radius: 0.3rem; color: white;
+    font-size: clamp(0.65rem, 0.7vw, 0.9rem); font-weight: 600; line-height: 1.45; white-space: nowrap;}
+.st-key-examples button::before {content: var(--tag); top: 6px; background: #e65100;}
+.st-key-examples button::after {content: var(--env); top: calc(66.6cqw - 1.55rem); background: rgba(0, 0, 0, 0.55);}
 .st-key-similar img {height: clamp(70px, calc(70px + (100vh - 768px) * 0.15), 140px); object-fit: cover;}
-.st-key-similar [data-testid="stImageCaption"] {font-size: clamp(0.68rem, 0.8vw, 0.95rem); line-height: 1.2; display: -webkit-box;
-    -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
+.st-key-similar [data-testid="stImageCaption"] {font-size: clamp(0.66rem, 0.9vw, 1.05rem); line-height: 1.2; display: -webkit-box;
+    -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+    hyphens: auto; word-break: normal; overflow-wrap: normal;}
 .bars {display: grid; grid-template-columns: max-content 1fr 3.2rem; gap: 0.35rem 0.6rem; align-items: center;
-        font-size: clamp(0.85rem, 0.85vw, 1.05rem); margin-bottom: 0.5rem;}
+        font-size: clamp(0.88rem, 0.95vw, 1.15rem); margin-bottom: 0.5rem;}
 .bars .track {height: 0.5rem; border-radius: 0.25rem; background: rgba(128, 128, 128, 0.18);}
 .bars .fill {height: 100%; border-radius: 0.25rem; background: #2e7d32;}
 .bars .pct {text-align: right;}
-.bars .new {color: #e65100; font-size: 0.85em;}
+.bars .new {color: #e65100; font-size: 0.8em;}
+/* captions (the grey lines) a bit larger than Streamlit's default */
+[data-testid="stCaptionContainer"] {font-size: 0.95rem;}
 </style>
 """
 
 # ---------------- the page ----------------
-st.markdown(CSS, unsafe_allow_html=True)
+st.markdown(CSS + cards_css(), unsafe_allow_html=True)
 st.title('Plant Disease Identifier')
-st.caption('Upload a photo of a leaf and the model will name the crop and the disease, out of 333 crop and disease '
-           'pairs in DPD-Small. It can also recognise 10 pairs that it never saw in training.')
+st.caption('Upload a leaf photo to find the crop and the disease, even for pairs never seen in training.')
 
 if not secret('HF_REPO'):
     st.error('Set HF_REPO (your Hugging Face model repo, e.g. "username/plant-disease-model") in the app secrets.')
@@ -177,14 +197,13 @@ with left, st.container(border=True, height='stretch', gap='small'):
         photo = st.camera_input('Take a photo of the leaf', key=f'camera{st.session_state.upload_key}',
                                 label_visibility='collapsed',
                                 on_change=lambda: st.session_state.update(source='camera'))
-    st.caption('Or try a photo from the test set. **New pair** = never seen in training, **harder** = the model is '
-               'less sure. **Lab** = plain background, **Field** = taken outdoors.')
+    st.caption('Or try a test photo (**New pair** = never seen in training):')
     with st.container(key='examples', gap='small'):
-        for row in (EXAMPLES[:4], EXAMPLES[4:]):
-            for col, (file, name, setting, tag) in zip(st.columns(4, gap='small'), row):
-                col.markdown(example_tile(file, setting, tag), unsafe_allow_html=True)
-                # the selected example gets a filled button
-                col.button(name, key=file, width='stretch', on_click=pick_example, args=(file,),
+        cards = list(enumerate(EXAMPLES))
+        for row in (cards[:4], cards[4:]):
+            for col, (i, (file, name, setting, tag)) in zip(st.columns(4, gap='small'), row):
+                # the whole card is the button; the selected example gets the filled (green) style
+                col.button(name, key=f'card{i}', width='stretch', on_click=pick_example, args=(file,),
                            type='primary' if st.session_state.source == file else 'secondary')
 
 # The photo to identify (None until a photo is uploaded, taken or an example is picked)
@@ -225,21 +244,20 @@ with right, st.container(border=True, height='stretch', gap='small'):
             if confidence > 0.5:
                 st.success(f'**{name(best)}** ({show_percent(confidence)} confident)')
             else:
-                st.warning(f'Best guess: **{name(best)}** ({show_percent(confidence)}). '
-                           'Not very sure, so check the other options too.')
+                st.warning(f'Best guess: **{name(best)}** ({show_percent(confidence)}), not very sure')
             if best in unseen:
-                st.badge('This crop and disease pair was never seen in training', icon=':material/new_releases:',
+                st.badge('New pair: never seen in training', icon=':material/new_releases:',
                          color='orange')
-            st.caption(f"On their own: crop **{nice(L['crops'][bc])}** ({show_percent(min(crop_p[bc], 1.0))}), "
+            st.caption(f"Crop **{nice(L['crops'][bc])}** ({show_percent(min(crop_p[bc], 1.0))}), "
                        f"disease **{nice(L['diseases'][bd])}** ({show_percent(min(dis_p[bd], 1.0))})")
 
         st.markdown('**Top-5 predictions**')
-        bars([(name(i) + (' <span class="new">never seen in training</span>' if i in unseen else ''), p[i]) for i in top5])
+        bars([(name(i) + (' <span class="new">new pair</span>' if i in unseen else ''), p[i]) for i in top5])
 
-        note = ('this pair has no training photos, so these are the closest of other pairs; ' if best in unseen else '')
-        st.markdown('**Most similar training photos** <span style="font-size:0.9em;opacity:0.65">'
-                    f'({note}bold = same crop or disease as the answer)</span>', unsafe_allow_html=True)
-        bold = lambda text, same: f'**{text}**' if same else text
+        note = (' <span style="font-size:0.9em;opacity:0.65">(of other pairs)</span>' if best in unseen else '')
+        st.markdown('**Most similar training photos**' + note, unsafe_allow_html=True)
+        # the crop or disease that matches the answer is shown in green
+        bold = lambda text, same: f':green[**{text}**]' if same else text
         pics = load_thumbs()
         with st.container(key='similar'):
             for col, i in zip(st.columns(6, gap='small'), nn):
