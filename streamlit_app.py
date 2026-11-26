@@ -91,11 +91,13 @@ def square(data: bytes, size=200):
 # It uses Streamlit's internal names, so the Streamlit version is pinned in requirements.txt.
 CSS = """
 <style>
+/* the whole page grows with the screen: 16px on a laptop, up to 20px on a large monitor */
+html {font-size: clamp(16px, min(1.05vw, 1.9vh), 20px) !important;}
 /* 3.75rem leaves room for Streamlit Cloud's top bar (Share, GitHub), which otherwise covers the title */
 .block-container {padding-top: 3.75rem; padding-bottom: 0.5rem;}
-h1 {padding: 0 0 0.2rem 0 !important; font-size: 2rem !important;}
+h1 {padding: 0 0 0.2rem 0 !important; font-size: clamp(2rem, 2vw, 2.6rem) !important;}
 [data-testid="stFileUploaderDropzone"] {
-    min-height: 98px; flex-direction: column; justify-content: center; align-items: center; gap: 6px;
+    min-height: clamp(98px, calc(98px + (100vh - 768px) * 0.1), 150px); flex-direction: column; justify-content: center; align-items: center; gap: 6px;
     border: 2px dashed rgba(128, 128, 128, 0.45); transition: border-color 0.2s, background-color 0.2s;
 }
 [data-testid="stFileUploaderDropzone"]:hover {
@@ -104,20 +106,21 @@ h1 {padding: 0 0 0.2rem 0 !important; font-size: 2rem !important;}
 [data-testid="stFileUploaderDropzone"]::before {content: 'Drag and drop a leaf photo here'; font-weight: 600;}
 [data-testid="stFileUploaderDropzone"]:has([data-testid="stFileChip"])::before {content: 'Drop another photo to replace it';}
 [data-testid="stFileUploaderDropzoneInstructions"] {text-align: center;}
-/* example buttons carry the photo names: smaller text so the names fit on one line */
-.st-key-examples button p {font-size: 0.7rem; white-space: nowrap;}
+/* sizes grow with the screen (clamp: smallest, preferred, largest), so big screens get bigger text and photos
+   while a 1366x768 laptop still shows the whole page; example names stay on one line */
+.st-key-examples button p {font-size: clamp(0.72rem, 0.78vw, 1rem); white-space: nowrap;}
 .st-key-examples button {min-height: 1.8rem; padding: 0 0.2rem;}
 /* photos are cropped to a fixed height so the whole page fits on one screen */
-.st-key-examples img {height: 82px; object-fit: cover;}
-.st-key-similar img {height: 70px; object-fit: cover;}
-.st-key-similar [data-testid="stImageCaption"] {font-size: 0.68rem; line-height: 1.2; display: -webkit-box;
+.st-key-examples img {height: clamp(82px, calc(82px + (100vh - 768px) * 0.2), 160px); object-fit: cover;}
+.st-key-similar img {height: clamp(70px, calc(70px + (100vh - 768px) * 0.15), 140px); object-fit: cover;}
+.st-key-similar [data-testid="stImageCaption"] {font-size: clamp(0.68rem, 0.8vw, 0.95rem); line-height: 1.2; display: -webkit-box;
     -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
 .bars {display: grid; grid-template-columns: max-content 1fr 3.2rem; gap: 0.35rem 0.6rem; align-items: center;
-        font-size: 0.85rem; margin-bottom: 0.5rem;}
+        font-size: clamp(0.85rem, 0.85vw, 1.05rem); margin-bottom: 0.5rem;}
 .bars .track {height: 0.5rem; border-radius: 0.25rem; background: rgba(128, 128, 128, 0.18);}
 .bars .fill {height: 100%; border-radius: 0.25rem; background: #2e7d32;}
 .bars .pct {text-align: right;}
-.bars .new {color: #e65100; font-size: 0.75rem;}
+.bars .new {color: #e65100; font-size: 0.85em;}
 </style>
 """
 
@@ -214,7 +217,7 @@ with right, st.container(border=True, height='stretch', gap='small'):
         bars([(name(i) + (' <span class="new">never seen in training</span>' if i in unseen else ''), p[i]) for i in top5])
 
         note = ('this pair has no training photos, so these are the closest of other pairs; ' if best in unseen else '')
-        st.markdown('**Most similar training photos** <span style="font-size:0.8rem;opacity:0.6">'
+        st.markdown('**Most similar training photos** <span style="font-size:0.9em;opacity:0.65">'
                     f'({note}bold = same crop or disease as the answer)</span>', unsafe_allow_html=True)
         bold = lambda text, same: f'**{text}**' if same else text
         pics = load_thumbs()
