@@ -66,8 +66,8 @@ def bars(rows):
 
 
 def show_percent(p):
-    """Formats a probability, showing '>99%' instead of 100%."""
-    return '>99%' if p >= 0.995 else f'{p:.0%}'
+    """Formats a probability, capped at 99%: no model is ever certain, so the app never claims 100% or '>99%'."""
+    return f'{min(p, 0.99):.0%}'
 
 
 # Example photos from the test set (two rows of four): 4 pairs never seen in training, 2 seen ones, 2 tricky ones
@@ -91,10 +91,11 @@ def square(data: bytes, size=200):
 # It uses Streamlit's internal names, so the Streamlit version is pinned in requirements.txt.
 CSS = """
 <style>
-.block-container {padding-top: 1.6rem; padding-bottom: 0.5rem;}
+/* 3.75rem leaves room for Streamlit Cloud's top bar (Share, GitHub), which otherwise covers the title */
+.block-container {padding-top: 3.75rem; padding-bottom: 0.5rem;}
 h1 {padding: 0 0 0.2rem 0 !important; font-size: 2rem !important;}
 [data-testid="stFileUploaderDropzone"] {
-    min-height: 105px; flex-direction: column; justify-content: center; align-items: center; gap: 6px;
+    min-height: 98px; flex-direction: column; justify-content: center; align-items: center; gap: 6px;
     border: 2px dashed rgba(128, 128, 128, 0.45); transition: border-color 0.2s, background-color 0.2s;
 }
 [data-testid="stFileUploaderDropzone"]:hover {
@@ -107,12 +108,12 @@ h1 {padding: 0 0 0.2rem 0 !important; font-size: 2rem !important;}
 .st-key-examples button p {font-size: 0.7rem; white-space: nowrap;}
 .st-key-examples button {min-height: 1.8rem; padding: 0 0.2rem;}
 /* photos are cropped to a fixed height so the whole page fits on one screen */
-.st-key-examples img {height: 92px; object-fit: cover;}
+.st-key-examples img {height: 82px; object-fit: cover;}
 .st-key-similar img {height: 70px; object-fit: cover;}
 .st-key-similar [data-testid="stImageCaption"] {font-size: 0.68rem; line-height: 1.2; display: -webkit-box;
     -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
 .bars {display: grid; grid-template-columns: max-content 1fr 3.2rem; gap: 0.35rem 0.6rem; align-items: center;
-        font-size: 0.85rem;}
+        font-size: 0.85rem; margin-bottom: 0.5rem;}
 .bars .track {height: 0.5rem; border-radius: 0.25rem; background: rgba(128, 128, 128, 0.18);}
 .bars .fill {height: 100%; border-radius: 0.25rem; background: #2e7d32;}
 .bars .pct {text-align: right;}
@@ -194,7 +195,7 @@ with right, st.container(border=True, height='stretch', gap='small'):
             dis_p[L['pair_dis'][i]] += q
         bc, bd = L['pair_crop'][best], L['pair_dis'][best]
 
-        pic, verdict = st.columns([1, 3], gap='small')
+        pic, verdict = st.columns([1, 4], gap='small')
         pic.image(square(data), width='stretch')
         with verdict:
             # Green if the model is more likely right than wrong (over 50%), amber if it is only guessing
@@ -212,16 +213,16 @@ with right, st.container(border=True, height='stretch', gap='small'):
         st.markdown('**Top-5 predictions**')
         bars([(name(i) + (' <span class="new">never seen in training</span>' if i in unseen else ''), p[i]) for i in top5])
 
-        st.markdown('**Most similar training photos**')
-        st.caption(('This pair has no training photos, so these are the closest photos of other pairs. '
-                    if best in unseen else '') + 'Bold = same crop or disease as the answer.')
+        note = ('this pair has no training photos, so these are the closest of other pairs; ' if best in unseen else '')
+        st.markdown('**Most similar training photos** <span style="font-size:0.8rem;opacity:0.6">'
+                    f'({note}bold = same crop or disease as the answer)</span>', unsafe_allow_html=True)
         bold = lambda text, same: f'**{text}**' if same else text
         pics = load_thumbs()
         with st.container(key='similar'):
             for col, i in zip(st.columns(6, gap='small'), nn):
                 c, d = int(model.kcrop[i]), int(model.kdis[i])
                 col.image(square(pics[model.files[i]], 128), width='stretch',
-                          caption=bold(nice(L['crops'][c]), c == bc) + ', ' + bold(nice(L['diseases'][d]), d == bd))
+                          caption=bold(nice(L['crops'][c]).capitalize(), c == bc) + ', ' + bold(nice(L['diseases'][d]), d == bd))
 
 with st.expander('About the model'):
     st.markdown(
