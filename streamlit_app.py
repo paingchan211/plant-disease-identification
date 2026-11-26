@@ -3,6 +3,7 @@
 # ensembled with Branch 2 (MaPLe, 3 seeds): S = 0.4 * S1 + 0.6 * S2 + 7.414 * [pair is unseen].
 # The model files are too big for GitHub, so they are downloaded from the Hugging Face repo in the HF_REPO secret.
 # Run locally with:  streamlit run streamlit_app.py
+import base64
 import io
 import os
 import zipfile
@@ -70,15 +71,28 @@ def show_percent(p):
     return f'{min(p, 0.99):.0%}'
 
 
-# Example photos from the test set (two rows of four): 4 pairs never seen in training, 2 seen ones, 2 tricky ones
-EXAMPLES = [('CDDM_tomato_early_blight_89125.jpg', 'Tomato early blight'),
-            ('MLBD_mango_anthracnose_423.jpg', 'Mango anthracnose'),
-            ('CDRD_cucumber_downy_mildew_474.jpg', 'Cucumber mildew'),
-            ('CDDM_bell_pepper_bacterial_spot_41490.jpg', 'Pepper bacterial spot'),
-            ('MTID_maize_streak_virus_14061.jpg', 'Corn streak virus'),
-            ('LSAN_apple_healthy_1349.JPG', 'Healthy apple'),
-            ('FP_corn_brown_spots_1775.jpg', 'Corn brown spot'),
-            ('PDN_cherry_aphis_spp_1562.jpg', 'Cherry aphids')]
+# Example photos from the test set: (file, name, lab or field, tag). Row 1: four pairs never seen in training;
+# row 2: two seen pairs, then two unseen pairs the model is less sure about (62% and 57%, still right).
+# Lab / field follows the project's image-source lists (src/data.py), the same split as the report's lab/field table.
+NEW, HARD = 'New pair', 'New pair · harder'
+EXAMPLES = [('CDDM_tomato_early_blight_89125.jpg', 'Tomato early blight', 'Lab', NEW),
+            ('MLBD_mango_anthracnose_423.jpg', 'Mango anthracnose', 'Lab', NEW),
+            ('CDRD_cucumber_downy_mildew_474.jpg', 'Cucumber downy mildew', 'Field', NEW),
+            ('CDDM_bell_pepper_bacterial_spot_41490.jpg', 'Pepper bacterial spot', 'Lab', NEW),
+            ('MTID_maize_streak_virus_14061.jpg', 'Corn streak virus', 'Lab', ''),
+            ('LSAN_apple_healthy_1349.JPG', 'Healthy apple', 'Field', ''),
+            ('FP_corn_brown_spots_1775.jpg', 'Corn brown spot', 'Field', HARD),
+            ('PDN_cherry_aphis_spp_1562.jpg', 'Cherry aphids', 'Field', HARD)]
+
+
+@st.cache_data
+def example_tile(file, setting, tag):
+    """The example photo with its tags drawn on top (HTML, so the tags stay sharp at any size)."""
+    buf = io.BytesIO()
+    square((HERE / 'examples' / file).read_bytes()).save(buf, 'JPEG', quality=88)
+    tags = (f'<span class="tag new">{tag}</span>' if tag else '') + f'<span class="tag env">{setting}</span>'
+    return (f'<div class="ex"><img alt="" src="data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode()}">'
+            f'{tags}</div>')
 
 
 @st.cache_data(max_entries=64)
@@ -108,10 +122,16 @@ h1 {padding: 0 0 0.2rem 0 !important; font-size: clamp(2rem, 2vw, 2.6rem) !impor
 [data-testid="stFileUploaderDropzoneInstructions"] {text-align: center;}
 /* sizes grow with the screen (clamp: smallest, preferred, largest), so big screens get bigger text and photos
    while a 1366x768 laptop still shows the whole page; example names stay on one line */
-.st-key-examples button p {font-size: clamp(0.72rem, 0.78vw, 1rem); white-space: nowrap;}
+.st-key-examples button p {font-size: clamp(0.67rem, 0.78vw, 1rem); white-space: nowrap;}
 .st-key-examples button {min-height: 1.8rem; padding: 0 0.2rem;}
 /* photos are cropped to a fixed height so the whole page fits on one screen */
-.st-key-examples img {height: clamp(82px, calc(82px + (100vh - 768px) * 0.2), 160px); object-fit: cover;}
+.ex {position: relative;}
+.ex img {display: block; width: 100%; height: clamp(82px, calc(82px + (100vh - 768px) * 0.2), 160px); object-fit: cover;
+         border-radius: 0.5rem;}
+.tag {position: absolute; left: 5px; padding: 0.05rem 0.35rem; border-radius: 0.3rem; color: white;
+      font-size: clamp(0.62rem, 0.62vw, 0.8rem); font-weight: 600; line-height: 1.4; white-space: nowrap;}
+.tag.new {top: 5px; background: #e65100;}
+.tag.env {bottom: 5px; background: rgba(0, 0, 0, 0.55);}
 .st-key-similar img {height: clamp(70px, calc(70px + (100vh - 768px) * 0.15), 140px); object-fit: cover;}
 .st-key-similar [data-testid="stImageCaption"] {font-size: clamp(0.68rem, 0.8vw, 0.95rem); line-height: 1.2; display: -webkit-box;
     -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
@@ -157,12 +177,12 @@ with left, st.container(border=True, height='stretch', gap='small'):
         photo = st.camera_input('Take a photo of the leaf', key=f'camera{st.session_state.upload_key}',
                                 label_visibility='collapsed',
                                 on_change=lambda: st.session_state.update(source='camera'))
-    st.caption('Or try a photo from the test set. The first four are pairs never seen in training, '
-               'the last two are tricky ones.')
+    st.caption('Or try a photo from the test set. **New pair** = never seen in training, **harder** = the model is '
+               'less sure. **Lab** = plain background, **Field** = taken outdoors.')
     with st.container(key='examples', gap='small'):
         for row in (EXAMPLES[:4], EXAMPLES[4:]):
-            for col, (file, name) in zip(st.columns(4, gap='small'), row):
-                col.image(square((HERE / 'examples' / file).read_bytes()), width='stretch')
+            for col, (file, name, setting, tag) in zip(st.columns(4, gap='small'), row):
+                col.markdown(example_tile(file, setting, tag), unsafe_allow_html=True)
                 # the selected example gets a filled button
                 col.button(name, key=file, width='stretch', on_click=pick_example, args=(file,),
                            type='primary' if st.session_state.source == file else 'secondary')
